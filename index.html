@@ -2,64 +2,110 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#000000">
 <title>Dungeon Crawler</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #000; overflow: hidden; touch-action: none; }
-canvas { display: block; }
+html { height: 100%; }
+body {
+  background: #000; overflow: hidden; touch-action: none;
+  height: 100%; height: 100dvh;
+  /* safe-area insets for notched phones */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  padding: 0; /* canvas fills viewport; insets applied per-element below */
+}
+canvas { display: block; width: 100% !important; height: 100% !important; }
 
 #hud {
   position: fixed; top: 0; left: 0; right: 0;
   display: flex; justify-content: space-between; align-items: center;
-  padding: 12px 16px; pointer-events: none;
-  font-family: monospace; font-size: 18px; color: #fff;
+  /* respect notch at top */
+  padding: max(12px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 12px max(16px, env(safe-area-inset-left));
+  pointer-events: none;
+  font-family: monospace;
+  font-size: clamp(14px, 4vw, 20px);
+  color: #fff;
   text-shadow: 0 0 8px #000;
   background: linear-gradient(to bottom, rgba(0,0,0,0.6), transparent);
+  z-index: 10;
 }
 #health-bar-wrap { display: flex; align-items: center; gap: 8px; }
 #health-bar {
-  width: 120px; height: 14px;
+  width: clamp(80px, 20vw, 160px); height: clamp(10px, 2.5vw, 16px);
   background: #300; border: 2px solid #c33; border-radius: 4px; overflow: hidden;
 }
 #health-fill { height: 100%; background: #e44; transition: width 0.1s; }
-#score { font-size: 20px; color: #ffd700; }
-#wave-label { font-size: 16px; color: #aaddff; }
+#score { font-size: clamp(14px, 4.5vw, 22px); color: #ffd700; }
+#wave-label { font-size: clamp(12px, 3.5vw, 18px); color: #aaddff; }
 
+/* ── Joystick ── */
 #joystick-zone {
-  position: fixed; bottom: 40px; left: 40px;
-  width: 120px; height: 120px;
-  background: rgba(255,255,255,0.07);
-  border: 2px solid rgba(255,255,255,0.18);
+  position: fixed;
+  bottom: max(40px, env(safe-area-inset-bottom, 0px) + 28px);
+  left: max(40px, env(safe-area-inset-left, 0px) + 20px);
+  width: clamp(130px, 22vw, 180px); height: clamp(130px, 22vw, 180px);
+  background: rgba(255,255,255,0.08);
+  border: 2px solid rgba(255,255,255,0.22);
   border-radius: 50%; pointer-events: none;
   touch-action: none;
+  /* subtle pulse to hint it's interactive */
+  animation: joyPulse 2.4s ease-in-out 1s 3;
+  z-index: 10;
+}
+@keyframes joyPulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(255,255,255,0); }
+  50%      { box-shadow: 0 0 0 8px rgba(255,255,255,0.10); }
 }
 #joystick-knob {
-  position: absolute; width: 44px; height: 44px;
-  background: rgba(255,255,255,0.30);
-  border: 2px solid rgba(255,255,255,0.55);
+  position: absolute;
+  width: clamp(48px, 9vw, 64px); height: clamp(48px, 9vw, 64px);
+  background: rgba(255,255,255,0.32);
+  border: 2px solid rgba(255,255,255,0.60);
   border-radius: 50%;
   top: 50%; left: 50%;
   transform: translate(-50%, -50%);
   pointer-events: none;
 }
 
+/* ── Touch hint overlay ── */
+#touch-hint {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  text-align: center;
+  padding: 0 0 max(18px, env(safe-area-inset-bottom, 0px) + 8px);
+  font-family: monospace; font-size: clamp(11px, 3vw, 14px);
+  color: rgba(255,255,255,0.45);
+  pointer-events: none; user-select: none;
+  transition: opacity 1s;
+  z-index: 10;
+}
+
+/* ── Game-over panel ── */
 #game-over {
   display: none;
   position: fixed; inset: 0;
   background: rgba(0,0,0,0.82);
   flex-direction: column; align-items: center; justify-content: center;
   font-family: monospace; color: #fff;
+  /* inset-safe padding so content isn't behind notch/home bar */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  z-index: 20;
 }
-#game-over h1 { font-size: 52px; color: #e44; margin-bottom: 14px; letter-spacing: 4px; }
-#game-over p  { font-size: 24px; margin-bottom: 10px; }
-#game-over .sub { font-size: 16px; color: #aaa; margin-bottom: 32px; }
+#game-over h1 { font-size: clamp(36px, 10vw, 60px); color: #e44; margin-bottom: 14px; letter-spacing: 4px; }
+#game-over p  { font-size: clamp(18px, 5vw, 26px); margin-bottom: 10px; }
+#game-over .sub { font-size: clamp(13px, 3.5vw, 17px); color: #aaa; margin-bottom: 32px; }
 #game-over button {
-  padding: 14px 40px; font-size: 20px; font-family: monospace;
+  /* minimum 44×44 px touch target per Apple/Material guidelines */
+  min-height: 52px; min-width: 160px;
+  padding: 14px 40px; font-size: clamp(16px, 4.5vw, 22px); font-family: monospace;
   background: #900; color: #fff; border: 2px solid #e44;
-  border-radius: 6px; cursor: pointer; letter-spacing: 2px;
+  border-radius: 8px; cursor: pointer; letter-spacing: 2px;
+  -webkit-tap-highlight-color: transparent;
 }
-#game-over button:hover { background: #b00; }
+#game-over button:active { background: #b00; }
 </style>
 </head>
 <body>
@@ -73,6 +119,7 @@ canvas { display: block; }
 </div>
 
 <div id="joystick-zone"><div id="joystick-knob"></div></div>
+<div id="touch-hint">drag left side to move &nbsp;·&nbsp; sword swings automatically</div>
 
 <div id="game-over">
   <h1>YOU DIED</h1>
@@ -412,23 +459,39 @@ function spawnWave(n) {
 // ═══════════════════════════════════════════════════════════════
 const jZone = document.getElementById('joystick-zone');
 const jKnob = document.getElementById('joystick-knob');
-const J_RADIUS = 60;
+const touchHint = document.getElementById('touch-hint');
+
+// J_RADIUS mirrors half the CSS clamp(130px, 22vw, 180px)
+function getJRadius() {
+  return jZone.offsetWidth / 2;
+}
 
 let jActive = false, jTouchId = null, jOX = 0, jOY = 0;
 let jVec = { x: 0, y: 0 };
+let hintFaded = false;
+
+function fadeHint() {
+  if (!hintFaded) {
+    hintFaded = true;
+    touchHint.style.opacity = '0';
+    setTimeout(() => { touchHint.style.display = 'none'; }, 1200);
+  }
+}
 
 // Allow joystick touch to start anywhere on the left half of screen
 document.addEventListener('touchstart', e => {
   for (const t of e.changedTouches) {
     if (!jActive && t.clientX < innerWidth * 0.5) {
+      const r = getJRadius();
       jActive  = true;
       jTouchId = t.identifier;
       jOX = t.clientX;
       jOY = t.clientY;
-      // Re-anchor zone visually
-      jZone.style.left = (jOX - 60) + 'px';
+      // Re-anchor zone visually under the finger
+      jZone.style.left   = (jOX - r) + 'px';
       jZone.style.bottom = '';
-      jZone.style.top  = (jOY - 60) + 'px';
+      jZone.style.top    = (jOY - r) + 'px';
+      fadeHint();
       e.preventDefault();
     }
   }
@@ -437,6 +500,7 @@ document.addEventListener('touchstart', e => {
 document.addEventListener('touchmove', e => {
   for (const t of e.changedTouches) {
     if (t.identifier === jTouchId) {
+      const J_RADIUS = getJRadius();
       let dx = t.clientX - jOX, dy = t.clientY - jOY;
       const len = Math.hypot(dx, dy);
       const cl  = Math.min(len, J_RADIUS);
@@ -452,10 +516,14 @@ document.addEventListener('touchmove', e => {
 const resetJoystick = e => {
   for (const t of e.changedTouches) {
     if (t.identifier === jTouchId) {
+      const r = getJRadius();
       jActive = false; jTouchId = null;
       jKnob.style.transform = 'translate(-50%, -50%)';
       jVec.x = 0; jVec.y = 0;
-      jZone.style.top = ''; jZone.style.bottom = '40px'; jZone.style.left = '40px';
+      // Return to default bottom-left position
+      jZone.style.top    = '';
+      jZone.style.bottom = `max(40px, calc(env(safe-area-inset-bottom, 0px) + 28px))`;
+      jZone.style.left   = `max(40px, calc(env(safe-area-inset-left, 0px) + 20px))`;
     }
   }
 };
@@ -509,6 +577,7 @@ function updateHUD() {
 function triggerGameOver() {
   gameAlive = false;
   hideSwordArc();
+  fadeHint();
   const el = document.getElementById('game-over');
   document.getElementById('final-score').textContent = `Score: ${score}`;
   document.getElementById('final-wave').textContent  = `Reached wave ${wave}`;
