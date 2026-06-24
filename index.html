@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>Dungeon Crawler</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; touch-action: none; font-family: monospace; }
+    canvas { display: block; }
+    #hud {
+      position: fixed; top: 0; left: 0; width: 100%;
+      display: flex; justify-content: space-between; align-items: flex-start;
+      padding: 12px 16px; pointer-events: none; color: #fff;
+    }
+    #hud-left { display: flex; flex-direction: column; gap: 4px; }
+    #hud-score { font-size: 18px; text-shadow: 0 0 6px #000; }
+    #hud-level { font-size: 14px; color: #aaa; text-shadow: 0 0 6px #000; }
+    #hp-wrap {
+      position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+      display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: none;
+    }
+    #hp-label { color: #fff; font-size: 12px; opacity: 0.7; }
+    #hp-track { width: 200px; height: 14px; background: #333; border: 2px solid #666; border-radius: 7px; overflow: hidden; }
+    #hp-bar { height: 100%; width: 100%; background: #e33; transition: width 0.1s; border-radius: 5px; }
+    #joystick-ring {
+      position: fixed; border-radius: 50%; border: 2px solid rgba(255,255,255,0.25);
+      background: rgba(255,255,255,0.05); pointer-events: none; display: none;
+      transform: translate(-50%, -50%); width: 120px; height: 120px;
+    }
+    #joystick-dot {
+      position: absolute; border-radius: 50%; background: rgba(255,255,255,0.45);
+      width: 44px; height: 44px; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    }
+    #touch-hint {
+      position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%);
+      color: rgba(255,255,255,0.35); font-size: 13px; pointer-events: none;
+      transition: opacity 0.5s;
+    }
+    #overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.75); justify-content: center; align-items: center;
+    }
+    #overlay.show { display: flex; }
+    #overlay-box {
+      background: #1a1a2e; border: 2px solid #444; border-radius: 12px;
+      padding: 32px 40px; text-align: center; color: #fff;
+    }
+    #overlay-box h1 { font-size: 2rem; margin-bottom: 8px; }
+    #overlay-box p { color: #aaa; margin-bottom: 20px; }
+    #restart-btn {
+      background: #4a7aff; border: none; color: #fff; padding: 12px 28px;
+      font-size: 1rem; border-radius: 8px; cursor: pointer; font-family: monospace;
+    }
+    #restart-btn:hover { background: #6a9aff; }
+    #sword-timer-bar {
+      position: fixed; top: 0; left: 0; height: 3px; background: #88aaff;
+      transition: width 0.05s linear; pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+<div id="hud">
+  <div id="hud-left">
+    <div id="hud-score">Score: 0</div>
+    <div id="hud-level">Level 1</div>
+  </div>
+</div>
+<div id="hp-wrap">
+  <div id="hp-label">HP</div>
+  <div id="hp-track"><div id="hp-bar"></div></div>
+</div>
+<div id="sword-timer-bar"></div>
+<div id="joystick-ring"><div id="joystick-dot"></div></div>
+<div id="touch-hint">Touch &amp; drag to move</div>
+
+<div id="overlay">
+  <div id="overlay-box">
+    <h1 id="overlay-title">GAME OVER</h1>
+    <p id="overlay-sub">Score: 0</p>
+    <button id="restart-btn">Play Again</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+<script>
+// ─── Constants ──────────────────────────────────────────────────────────────
+const TILE       = 1;
+const DW         = 42;
+const DH         = 42;
+const VIEW_H     = 14;          // world units visible vertically (half)
+const P_SPEED    = 6.5;
+const E_SPEED    = 2.8;
+const SWORD_R    = 2.6;
+const SWORD_ARC  = 120 * Math.PI / 180;
+const SWORD_CD   = 1.6;
+const SWEEP_DUR  = 0.28;
+const P_MAX_HP   = 10;
+const E_BASE_HP  = 2;
+const E_DMG_PS   = 3;          // damage per second while touching
+const HIT_FLASH  = 0.18;
+
+// ─── Renderer / Scene / Camera ───────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0a12);
+
+const W = innerWidth, H = innerHeight;
+const asp = W / H;
+let camHalf = VIEW_H;
+const camera = new THREE.OrthographicCamera(
+  -camHalf * asp, camHalf * asp, camHalf, -camHalf, 0.1, 100
+);
+camera.position.z = 10;
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const ptLight = new THREE.PointLight(0xffa860, 1.6, 18);
+ptLight.position.z = 5;
+scene.add(ptLight);
+
+// ─── Game State ──────────────────────────────────────────────────────────────
+let px = 0, py = 0, pFacing = 0;
+let pHP = P_MAX_HP;
+let score = 0, level = 1;
+let swordCooldown = 0, sweepT = -1;
+let gameOverFlag = false;
+let enemies = [];
+let dungeon = [];
+let sceneObjects = [];   // track for disposal
+
+// ─── Input ───────────────────────────────────────────────────────────────────
+const keys = {};
+addEventListener('keydown', e => { keys[e.code] = true; });
+addEventListener('keyup',   e => { keys[e.code] = false; });
+
+let joyOrigin = null, joyDelta = { x: 0, y: 0 };
+const ring    = document.getElementById('joystick-ring');
+const dot     = document.getElementById('joystick-dot');
+const hint    = document.getElementById('touch-hint');
+let hintGone  = false;
+
+renderer.domElement.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  joyOrigin = { x: t.clientX, y: t.clientY };
+  ring.style.left = t.clientX + 'px';
+  ring.style.top  = t.clientY + 'px';
+  ring.style.display = 'block';
+  if (!hintGone) { hint.style.opacity = '0'; hintGone = true; }
+}, { passive: false });
+
+renderer.domElement.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  if (!joyOrigin) return;
+  let dx = t.clientX - joyOrigin.x;
+  let dy = t.clientY - joyOrigin.y;
+  const len = Math.hypot(dx, dy);
+  const maxR = 50;
+  if (len > maxR) { dx *= maxR / len; dy *= maxR / len; }
+  joyDelta = { x: dx / maxR, y: -dy / maxR };
+  dot.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+}, { passive: false });
+
+renderer.domElement.addEventListener('touchend', e => {
+  e.preventDefault();
+  joyOrigin = null;
+  joyDelta = { x: 0, y: 0 };
+  ring.style.display = 'none';
+  dot.style.transform = 'translate(-50%,-50%)';
+}, { passive: false });
+
+// ─── Dungeon Generation ───────────────────────────────────────────────────────
+function buildDungeon() {
+  dungeon = Array.from({ length: DH }, () => new Uint8Array(DW).fill(1));
+
+  const rooms = [];
+  const attempts = 60 + level * 4;
+  for (let i = 0; i < attempts; i++) {
+    const rw = 4 + Math.floor(Math.random() * 5);
+    const rh = 4 + Math.floor(Math.random() * 5);
+    const rx = 1 + Math.floor(Math.random() * (DW - rw - 2));
+    const ry = 1 + Math.floor(Math.random() * (DH - rh - 2));
+    // Overlap check
+    let ok = true;
+    for (const r of rooms) {
+      if (rx < r.x + r.w + 1 && rx + rw > r.x - 1 &&
+          ry < r.y + r.h + 1 && ry + rh > r.y - 1) { ok = false; break; }
+    }
+    if (!ok) continue;
+    rooms.push({ x: rx, y: ry, w: rw, h: rh });
+    for (let y = ry; y < ry + rh; y++)
+      for (let x = rx; x < rx + rw; x++)
+        dungeon[y][x] = 0;
+  }
+
+  // Connect with corridors (L-shaped)
+  for (let i = 1; i < rooms.length; i++) {
+    const a = rooms[i - 1], b = rooms[i];
+    const ax = Math.floor(a.x + a.w / 2), ay = Math.floor(a.y + a.h / 2);
+    const bx = Math.floor(b.x + b.w / 2), by = Math.floor(b.y + b.h / 2);
+    for (let x = Math.min(ax, bx); x <= Math.max(ax, bx); x++) dungeon[ay][x] = 0;
+    for (let y = Math.min(ay, by); y <= Math.max(ay, by); y++) dungeon[y][bx] = 0;
+  }
+
+  return rooms;
+}
+
+// ─── Scene Building ───────────────────────────────────────────────────────────
+function clearScene() {
+  for (const obj of sceneObjects) scene.remove(obj);
+  sceneObjects = [];
+  enemies = [];
+}
+
+function addToScene(obj) { scene.add(obj); sceneObjects.push(obj); return obj; }
+
+function buildScene(rooms) {
+  clearScene();
+
+  // Floor (single large plane tinted per-tile via vertex colors would be complex;
+  // use one big plane + instanced darker overlay for variation)
+  const floorGeo = new THREE.PlaneGeometry(DW * TILE, DH * TILE);
+  const floorMat = new THREE.MeshLambertMaterial({ color: 0x1e1a16 });
+  const floor = new THREE.Mesh(floorGeo, floorMat);
+  floor.position.set((DW / 2 - 0.5) * TILE, (DH / 2 - 0.5) * TILE, -0.05);
+  addToScene(floor);
+
+  // Walls — instanced
+  let wallCnt = 0;
+  for (let y = 0; y < DH; y++) for (let x = 0; x < DW; x++) if (dungeon[y][x]) wallCnt++;
+  const wallGeo = new THREE.BoxGeometry(TILE, TILE, 0.5);
+  const wallMat = new THREE.MeshLambertMaterial({ color: 0x3d2f22 });
+  const walls = new THREE.InstancedMesh(wallGeo, wallMat, wallCnt);
+  const dummy = new THREE.Object3D();
+  let wi = 0;
+  for (let y = 0; y < DH; y++) {
+    for (let x = 0; x < DW; x++) {
+      if (dungeon[y][x]) {
+        dummy.position.set(x * TILE, y * TILE, 0.2);
+        dummy.updateMatrix();
+        walls.setMatrixAt(wi++, dummy.matrix);
+      }
+    }
+  }
+  walls.instanceMatrix.needsUpdate = true;
+  addToScene(walls);
+
+  // Player
+  const pGroup = new THREE.Group();
+  const pBody = new THREE.Mesh(
+    new THREE.CircleGeometry(0.4, 20),
+    new THREE.MeshLambertMaterial({ color: 0x4477ff })
+  );
+  pBody.position.z = 0.1;
+  pGroup.add(pBody);
+  // Direction pip
+  const pip = new THREE.Mesh(
+    new THREE.CircleGeometry(0.12, 8),
+    new THREE.MeshLambertMaterial({ color: 0xffffff })
+  );
+  pip.position.set(0.28, 0, 0.15);
+  pGroup.add(pip);
+  addToScene(pGroup);
+  window._player = pGroup;
+
+  // Sword arc (fan geometry, rebuilt each sweep)
+  window._swordArc = null;
+  window._swordMat = new THREE.MeshBasicMaterial({ color: 0xddcc88, transparent: true, opacity: 0.75, side: THREE.DoubleSide });
+
+  // Enemies
+  const numE = 4 + level * 2;
+  const eHP  = E_BASE_HP + level - 1;
+  for (let i = 0; i < numE; i++) {
+    const room = rooms[1 + Math.floor(Math.random() * (rooms.length - 1))];
+    const ex = (room.x + 1 + Math.random() * (room.w - 2)) * TILE;
+    const ey = (room.y + 1 + Math.random() * (room.h - 2)) * TILE;
+
+    const eGroup = new THREE.Group();
+    const eBody = new THREE.Mesh(
+      new THREE.CircleGeometry(0.38, 14),
+      new THREE.MeshLambertMaterial({ color: 0xcc2222 })
+    );
+    eBody.position.z = 0.1;
+    eGroup.add(eBody);
+
+    // Eye
+    const eye = new THREE.Mesh(
+      new THREE.CircleGeometry(0.1, 8),
+      new THREE.MeshLambertMaterial({ color: 0xff7700 })
+    );
+    eye.position.set(0.18, 0.18, 0.15);
+    eGroup.add(eye);
+
+    // HP bar (thin plane)
+    const hpTrackMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.8, 0.1),
+      new THREE.MeshBasicMaterial({ color: 0x333333 })
+    );
+    hpTrackMesh.position.set(0, 0.62, 0.2);
+    eGroup.add(hpTrackMesh);
+
+    const hpBarMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.8, 0.1),
+      new THREE.MeshBasicMaterial({ color: 0x44ee44 })
+    );
+    hpBarMesh.position.set(0, 0.62, 0.21);
+    eGroup.add(hpBarMesh);
+
+    eGroup.position.set(ex, ey, 0);
+    addToScene(eGroup);
+
+    enemies.push({
+      group: eGroup, bodyMat: eBody.material, hpBarMesh,
+      x: ex, y: ey, hp: eHP, maxHP: eHP,
+      hitFlash: 0, hitByThisSweep: false
+    });
+  }
+}
+
+// ─── Sword Arc Geometry ───────────────────────────────────────────────────────
+function makeFanGeo(startAngle, endAngle, radius, segs) {
+  const geo = new THREE.BufferGeometry();
+  const verts = [];
+  verts.push(0, 0, 0);
+  for (let i = 0; i <= segs; i++) {
+    const a = startAngle + (endAngle - startAngle) * (i / segs);
+    verts.push(Math.cos(a) * radius, Math.sin(a) * radius, 0);
+  }
+  const idx = [];
+  for (let i = 0; i < segs; i++) idx.push(0, i + 1, i + 2);
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setIndex(idx);
+  return geo;
+}
+
+// ─── Wall Collision ───────────────────────────────────────────────────────────
+function solid(wx, wy) {
+  const tx = Math.round(wx / TILE), ty = Math.round(wy / TILE);
+  if (tx < 0 || ty < 0 || tx >= DW || ty >= DH) return true;
+  return dungeon[ty][tx] === 1;
+}
+
+function slideMove(ox, oy, dx, dy, radius) {
+  let nx = ox + dx, ny = oy + dy;
+  const r = radius;
+  if (solid(nx + r, oy) || solid(nx - r, oy)) nx = ox;
+  if (solid(ox, ny + r) || solid(ox, ny - r)) ny = oy;
+  if (solid(nx + r, ny) || solid(nx - r, ny)) nx = ox;
+  if (solid(ox, ny + r) || solid(ox, ny - r)) ny = oy;
+  return { x: nx, y: ny };
+}
+
+// ─── UI helpers ───────────────────────────────────────────────────────────────
+function updateHP() {
+  const pct = Math.max(0, pHP / P_MAX_HP) * 100;
+  const bar = document.getElementById('hp-bar');
+  bar.style.width = pct + '%';
+  bar.style.background = pct > 50 ? '#44ee44' : pct > 25 ? '#ffaa22' : '#ee2222';
+}
+
+// ─── Level Start ──────────────────────────────────────────────────────────────
+function startLevel() {
+  document.getElementById('hud-level').textContent = 'Level ' + level;
+  const rooms = buildDungeon();
+  buildScene(rooms);
+
+  const r0 = rooms[0];
+  px = (r0.x + Math.floor(r0.w / 2)) * TILE;
+  py = (r0.y + Math.floor(r0.h / 2)) * TILE;
+  pFacing = 0;
+  swordCooldown = 0;
+  sweepT = -1;
+
+  ptLight.position.set(px, py, 5);
+  camera.position.set(px, py, 10);
+  updateHP();
+}
+
+// ─── Sweep logic ─────────────────────────────────────────────────────────────
+function startSweep() {
+  sweepT = 0;
+  // Mark all enemies as not-yet-hit this sweep
+  enemies.forEach(e => e.hitByThisSweep = false);
+}
+
+function updateSweep(dt) {
+  if (sweepT < 0) return;
+  sweepT += dt;
+  const t = sweepT / SWEEP_DUR;
+
+  // Remove old arc
+  if (window._swordArc) {
+    scene.remove(window._swordArc);
+    window._swordArc.geometry.dispose();
+    window._swordArc = null;
+  }
+
+  if (t >= 1) { sweepT = -1; return; }
+
+  // Build arc fan spanning the FULL 120° always; sweep it from -60 to +60 relative to facing
+  const halfArc = SWORD_ARC / 2;
+  const sweepStart = pFacing - halfArc;
+  const sweepEnd   = pFacing + halfArc;
+
+  // Animated leading edge at current angle
+  const leadAngle = sweepStart + SWORD_ARC * t;
+
+  // Draw fan from sweep start to leading edge
+  const fanGeo = makeFanGeo(sweepStart, leadAngle, SWORD_R, 20);
+  const arc = new THREE.Mesh(fanGeo, window._swordMat);
+  arc.position.set(px, py, 0.3);
+  window._swordMat.opacity = 0.55 * (1 - t * 0.5);
+  scene.add(arc);
+  window._swordArc = arc;
+
+  // Draw sword blade along leading edge
+  // (simple elongated box oriented along leadAngle)
+  if (!window._swordBlade) {
+    const bGeo = new THREE.BoxGeometry(0.12, 1.0, 0.05);
+    const bMat = new THREE.MeshBasicMaterial({ color: 0xeeeebb });
+    window._swordBlade = new THREE.Mesh(bGeo, bMat);
+    scene.add(window._swordBlade);
+    sceneObjects.push(window._swordBlade);
+  }
+  const blade = window._swordBlade;
+  const mid = leadAngle;
+  blade.position.set(
+    px + Math.cos(mid) * (SWORD_R * 0.55),
+    py + Math.sin(mid) * (SWORD_R * 0.55),
+    0.35
+  );
+  blade.rotation.z = mid + Math.PI / 2;
+  blade.visible = true;
+
+  // Hit detection — check enemies in swept arc so far
+  for (const e of enemies) {
+    if (e.hp <= 0 || e.hitByThisSweep) continue;
+    const edx = e.x - px, edy = e.y - py;
+    const dist = Math.hypot(edx, edy);
+    if (dist > SWORD_R + 0.4) continue;
+    const angle = Math.atan2(edy, edx);
+    let diff = angle - pFacing;
+    while (diff >  Math.PI) diff -= 2 * Math.PI;
+    while (diff < -Math.PI) diff += 2 * Math.PI;
+    if (Math.abs(diff) <= halfArc) {
+      e.hitByThisSweep = true;
+      e.hp--;
+      e.hitFlash = HIT_FLASH;
+      if (e.hp <= 0) {
+        score += 10 * level;
+        document.getElementById('hud-score').textContent = 'Score: ' + score;
+      }
+    }
+  }
+}
+
+// ─── Main Loop ────────────────────────────────────────────────────────────────
+const clock = new THREE.Clock();
+
+function loop() {
+  requestAnimationFrame(loop);
+  if (gameOverFlag) { renderer.render(scene, camera); return; }
+
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  // ── Movement input ──
+  let mx = 0, my = 0;
+  if (keys['ArrowLeft'] || keys['KeyA']) mx -= 1;
+  if (keys['ArrowRight'] || keys['KeyD']) mx += 1;
+  if (keys['ArrowUp'] || keys['KeyW']) my += 1;
+  if (keys['ArrowDown'] || keys['KeyS']) my -= 1;
+
+  // Touch overrides keyboard
+  if (joyOrigin) { mx = joyDelta.x; my = joyDelta.y; }
+
+  const mlen = Math.hypot(mx, my);
+  if (mlen > 0) {
+    mx /= mlen; my /= mlen;
+    pFacing = Math.atan2(my, mx);
+    const spd = P_SPEED * dt;
+    const moved = slideMove(px, py, mx * spd, my * spd, 0.42);
+    px = moved.x; py = moved.y;
+  }
+
+  // ── Player mesh ──
+  const player = window._player;
+  player.position.set(px, py, 0);
+  player.rotation.z = pFacing - Math.PI / 2;
+
+  // ── Sword cooldown ──
+  swordCooldown -= dt;
+  if (swordCooldown <= 0 && sweepT < 0) {
+    swordCooldown = SWORD_CD;
+    startSweep();
+  }
+  // Sword timer bar (shows cooldown progress)
+  const cdPct = Math.max(0, 1 - (-swordCooldown) / SWORD_CD) * 100;
+  document.getElementById('sword-timer-bar').style.width = cdPct + '%';
+
+  updateSweep(dt);
+
+  // Hide sword blade when no sweep
+  if (sweepT < 0 && window._swordBlade) window._swordBlade.visible = false;
+
+  // ── Enemies ──
+  let alive = 0;
+  for (const e of enemies) {
+    if (e.hp <= 0) { e.group.visible = false; continue; }
+    alive++;
+
+    // Hit flash
+    if (e.hitFlash > 0) {
+      e.hitFlash -= dt;
+      e.bodyMat.color.set(0xffffff);
+    } else {
+      e.bodyMat.color.set(0xcc2222);
+    }
+
+    // Move toward player (simple)
+    const edx = px - e.x, edy = py - e.y;
+    const elen = Math.hypot(edx, edy);
+    if (elen > 0.45) {
+      const espd = E_SPEED * dt;
+      const nm = slideMove(e.x, e.y, (edx / elen) * espd, (edy / elen) * espd, 0.4);
+      e.x = nm.x; e.y = nm.y;
+    }
+    e.group.position.set(e.x, e.y, 0);
+    // Face player
+    e.group.rotation.z = Math.atan2(edy, edx) - Math.PI / 2;
+
+    // HP bar
+    const hpPct = e.hp / e.maxHP;
+    e.hpBarMesh.scale.x = hpPct;
+    e.hpBarMesh.position.x = -(1 - hpPct) * 0.4;
+    e.hpBarMesh.material.color.set(hpPct > 0.5 ? 0x44ee44 : hpPct > 0.25 ? 0xffaa22 : 0xee2222);
+
+    // Damage player
+    if (elen < 0.78) {
+      pHP -= E_DMG_PS * dt;
+      updateHP();
+      if (pHP <= 0) { triggerGameOver(); return; }
+    }
+  }
+
+  // ── Point light follows player ──
+  ptLight.position.set(px, py, 5);
+
+  // ── Camera follow ──
+  camera.position.x += (px - camera.position.x) * 0.12;
+  camera.position.y += (py - camera.position.y) * 0.12;
+
+  // ── Level complete ──
+  if (alive === 0) {
+    level++;
+    startLevel();
+  }
+
+  renderer.render(scene, camera);
+}
+
+function triggerGameOver() {
+  gameOverFlag = true;
+  const ov = document.getElementById('overlay');
+  document.getElementById('overlay-title').textContent = 'GAME OVER';
+  document.getElementById('overlay-sub').textContent = 'Score: ' + score + '  ·  Level ' + level;
+  ov.classList.add('show');
+}
+
+document.getElementById('restart-btn').addEventListener('click', () => {
+  score = 0;
+  level = 1;
+  pHP = P_MAX_HP;
+  gameOverFlag = false;
+  document.getElementById('hud-score').textContent = 'Score: 0';
+  document.getElementById('overlay').classList.remove('show');
+  startLevel();
+});
+
+// ── Resize ──
+addEventListener('resize', () => {
+  const a = innerWidth / innerHeight;
+  camera.left   = -camHalf * a;
+  camera.right  =  camHalf * a;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ── Boot ──
+startLevel();
+loop();
+</script>
+</body>
+</html>
