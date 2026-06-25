@@ -212,6 +212,53 @@ function isWallAt(wx, wy) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  PATHFINDING  (BFS flow field from player tile)
+// ═══════════════════════════════════════════════════════════════
+// flowField maps tile key (row*COLS+col) → {dx,dy} tile-space direction toward player
+const flowField = new Map();
+let _fpLastCol = -1, _fpLastRow = -1;
+
+function worldToTile(wx, wy) {
+  return {
+    col: Math.round(wx / TILE + COLS / 2),
+    row: Math.round(wy / TILE + ROWS / 2)
+  };
+}
+
+// BFS outward from player tile; each reachable tile stores a unit step toward player.
+function buildFlowField(px, py) {
+  const { col: sc, row: sr } = worldToTile(px, py);
+  flowField.clear();
+
+  const queue = [[sc, sr]];
+  const visited = new Set([sr * COLS + sc]);
+
+  while (queue.length) {
+    const [c, r] = queue.shift();
+    for (const [dc, dr] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+      const nc = c + dc, nr = r + dr;
+      if (nc < 0 || nc >= COLS || nr < 0 || nr >= ROWS) continue;
+      if (MAP[nr][nc] === 1) continue;
+      const key = nr * COLS + nc;
+      if (visited.has(key)) continue;
+      visited.add(key);
+      // Direction from (nc,nr) → (c,r): one step closer to player
+      flowField.set(key, { dx: c - nc, dy: r - nr });
+      queue.push([nc, nr]);
+    }
+  }
+
+  _fpLastCol = sc;
+  _fpLastRow = sr;
+}
+
+// Returns normalised world-space move direction for a world position, or null.
+function getFlowDir(wx, wy) {
+  const { col, row } = worldToTile(wx, wy);
+  return flowField.get(row * COLS + col) || null;
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  THREE.JS SETUP
 // ═══════════════════════════════════════════════════════════════
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -383,12 +430,20 @@ class Enemy {
   update(dt, px, py, speed) {
     if (this.dead) return;
 
-    // Direct line-of-sight chase
-    const dx = px - this.x, dy = py - this.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist > 0.01) {
-      const vx = (dx / dist) * speed * dt;
-      const vy = (dy / dist) * speed * dt;
+    // Flow-field pathfinding; fall back to direct chase if tile has no entry
+    const flow = getFlowDir(this.x, this.y);
+    let mdx, mdy;
+    if (flow) {
+      mdx = flow.dx; mdy = flow.dy;
+    } else {
+      const d = Math.hypot(px - this.x, py - this.y);
+      mdx = d > 0.01 ? (px - this.x) / d : 0;
+      mdy = d > 0.01 ? (py - this.y) / d : 0;
+    }
+    const mlen = Math.hypot(mdx, mdy);
+    if (mlen > 0) {
+      const vx = (mdx / mlen) * speed * dt;
+      const vy = (mdy / mlen) * speed * dt;
       // Slide-axis collision
       if (!isWallAt(this.x + vx, this.y))       this.x += vx;
       if (!isWallAt(this.x,       this.y + vy))  this.y += vy;
@@ -669,6 +724,10 @@ function loop(ts) {
   // ── Enemy speed for this wave ────────────────────────────────
   const enemySpeed = ENEMY_SPEED_BASE + wave * ENEMY_SPEED_SCALE;
 
+  // ── Rebuild flow field when player crosses a tile boundary ───
+  { const { col, row } = worldToTile(player.x, player.y);
+    if (col !== _fpLastCol || row !== _fpLastRow) buildFlowField(player.x, player.y); }
+
   // ── Update enemies ───────────────────────────────────────────
   for (const e of enemies) {
     if (e.dead) continue;
@@ -722,6 +781,7 @@ window.addEventListener('resize', () => {
 //  KICK OFF
 // ═══════════════════════════════════════════════════════════════
 updateHUD();
+buildFlowField(player.x, player.y);
 spawnWave(1);
 requestAnimationFrame(loop);
 </script>
