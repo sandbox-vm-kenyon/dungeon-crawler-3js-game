@@ -156,6 +156,9 @@ const ENEMY_SPEED_BASE  = 2.8;
 const ENEMY_SPEED_SCALE = 0.08;  // per wave
 
 const VIEW_HALF = 18;   // orthographic half-height
+const WALL_H    = 3;    // wall height for 3D rendering
+const CAM_BACK  = 8;    // camera Y offset behind view centre (creates tilt)
+const CAM_HIGH  = 28;   // camera height above world plane
 
 // ═══════════════════════════════════════════════════════════════
 //  DUNGEON GENERATION  (recursive-backtracker maze, then widen)
@@ -270,25 +273,34 @@ const aspect = innerWidth / innerHeight;
 const camera = new THREE.OrthographicCamera(
   -VIEW_HALF * aspect, VIEW_HALF * aspect,
    VIEW_HALF,         -VIEW_HALF,
-  0.1, 100
+  0.1, 500
 );
-camera.position.z = 10;
+camera.position.set(0, -CAM_BACK, CAM_HIGH);
 camera.lookAt(0, 0, 0);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0a0a0a);
+scene.background = new THREE.Color(0x080808);
+
+// ── Lighting ───────────────────────────────────────────────────
+scene.add(new THREE.AmbientLight(0x7080b0, 0.65));
+const sunLight = new THREE.DirectionalLight(0xfff0d0, 1.1);
+sunLight.position.set(6, -10, 20);
+scene.add(sunLight);
+const fillLight = new THREE.DirectionalLight(0x2030a0, 0.35);
+fillLight.position.set(-8, 14, 6);
+scene.add(fillLight);
 
 // ── Floor ──────────────────────────────────────────────────────
 {
   const g = new THREE.PlaneGeometry(COLS * TILE, ROWS * TILE);
-  const m = new THREE.MeshBasicMaterial({ color: 0x1a1208 });
+  const m = new THREE.MeshLambertMaterial({ color: 0x1a1208 });
   scene.add(new THREE.Mesh(g, m));
 }
 
 // ── Floor tile grid (subtle) ───────────────────────────────────
 {
   const g = new THREE.PlaneGeometry(TILE * 0.96, TILE * 0.96);
-  const m = new THREE.MeshBasicMaterial({ color: 0x201610 });
+  const m = new THREE.MeshLambertMaterial({ color: 0x201610 });
   const floors = FLOOR_TILES.length;
   const inst  = new THREE.InstancedMesh(g, m, floors);
   const dummy = new THREE.Object3D();
@@ -301,7 +313,7 @@ scene.background = new THREE.Color(0x0a0a0a);
   scene.add(inst);
 }
 
-// ── Walls — instanced meshes ───────────────────────────────────
+// ── Walls — instanced 3D boxes ────────────────────────────────
 {
   const wallPos = [];
   for (let r = 0; r < ROWS; r++) {
@@ -315,53 +327,57 @@ scene.background = new THREE.Color(0x0a0a0a);
   const count = wallPos.length / 2;
   const dummy = new THREE.Object3D();
 
-  // Base wall colour
-  const wg = new THREE.PlaneGeometry(TILE, TILE);
-  const wm = new THREE.MeshBasicMaterial({ color: 0x3e2e1e });
+  // 3D stone wall blocks
+  const wg = new THREE.BoxGeometry(TILE, TILE, WALL_H);
+  const wm = new THREE.MeshLambertMaterial({ color: 0x5a4028 });
   const walls = new THREE.InstancedMesh(wg, wm, count);
   for (let i = 0; i < count; i++) {
-    dummy.position.set(wallPos[i*2], wallPos[i*2+1], 0.01);
+    dummy.position.set(wallPos[i*2], wallPos[i*2+1], WALL_H / 2);
+    dummy.rotation.set(0, 0, 0);
     dummy.updateMatrix();
     walls.setMatrixAt(i, dummy.matrix);
   }
   walls.instanceMatrix.needsUpdate = true;
   scene.add(walls);
 
-  // Inner shadow layer
-  const wg2 = new THREE.PlaneGeometry(TILE * 0.88, TILE * 0.88);
-  const wm2 = new THREE.MeshBasicMaterial({ color: 0x251a0e });
-  const walls2 = new THREE.InstancedMesh(wg2, wm2, count);
+  // Cap layer on wall tops (slightly darker)
+  const wg2 = new THREE.BoxGeometry(TILE, TILE, 0.08);
+  const wm2 = new THREE.MeshLambertMaterial({ color: 0x3a2818 });
+  const wallTops = new THREE.InstancedMesh(wg2, wm2, count);
   for (let i = 0; i < count; i++) {
-    dummy.position.set(wallPos[i*2], wallPos[i*2+1], 0.02);
+    dummy.position.set(wallPos[i*2], wallPos[i*2+1], WALL_H + 0.04);
+    dummy.rotation.set(0, 0, 0);
     dummy.updateMatrix();
-    walls2.setMatrixAt(i, dummy.matrix);
+    wallTops.setMatrixAt(i, dummy.matrix);
   }
-  walls2.instanceMatrix.needsUpdate = true;
-  scene.add(walls2);
+  wallTops.instanceMatrix.needsUpdate = true;
+  scene.add(wallTops);
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  PLAYER MESH
+//  PLAYER MESH  (3D cylinder standing upright in Z)
 // ═══════════════════════════════════════════════════════════════
+const _playerGeo = new THREE.CylinderGeometry(PLAYER_RADIUS, PLAYER_RADIUS, 0.9, 18);
+_playerGeo.rotateX(Math.PI / 2); // axis along Z so it stands on the XY floor
 const playerBody = new THREE.Mesh(
-  new THREE.CircleGeometry(PLAYER_RADIUS, 20),
-  new THREE.MeshBasicMaterial({ color: 0x44aaff })
+  _playerGeo,
+  new THREE.MeshLambertMaterial({ color: 0x44aaff })
 );
-playerBody.position.z = 0.1;
+playerBody.position.z = 0.45;   // half-height above floor
 scene.add(playerBody);
 
-// Facing dot
+// Facing indicator — small sphere on top of the cylinder
 const facingDot = new THREE.Mesh(
-  new THREE.CircleGeometry(0.13, 8),
-  new THREE.MeshBasicMaterial({ color: 0xffffff })
+  new THREE.SphereGeometry(0.14, 8, 6),
+  new THREE.MeshLambertMaterial({ color: 0xffffff })
 );
-facingDot.position.z = 0.12;
+facingDot.position.z = 0.92;
 scene.add(facingDot);
 
 // ═══════════════════════════════════════════════════════════════
 //  SWORD ARC  (rebuilt each frame during sweep)
 // ═══════════════════════════════════════════════════════════════
-const swordMat = new THREE.MeshBasicMaterial({
+const swordMat = new THREE.MeshBasicMaterial({  // basic — always glows regardless of light
   color: 0xffdd44,
   transparent: true,
   opacity: 0.8,
@@ -389,7 +405,7 @@ function showSwordArc(px, py, facing, progress) {
   const mat = swordMat.clone();
   mat.opacity = 0.8 * (1 - progress * 0.6);
   swordMesh = new THREE.Mesh(geo, mat);
-  swordMesh.position.set(px, py, 0.09);
+  swordMesh.position.set(px, py, 0.06);
   swordMesh.rotation.z = facing;
   scene.add(swordMesh);
 }
@@ -401,8 +417,8 @@ function hideSwordArc() {
 // ═══════════════════════════════════════════════════════════════
 //  ENEMY CLASS
 // ═══════════════════════════════════════════════════════════════
-const _enemyGeo  = new THREE.CircleGeometry(ENEMY_RADIUS, 14);
-const _enemyMat  = new THREE.MeshBasicMaterial({ color: 0xff3333 });
+const _enemyGeo  = (() => { const g = new THREE.CylinderGeometry(ENEMY_RADIUS, ENEMY_RADIUS * 0.85, 0.85, 12); g.rotateX(Math.PI / 2); return g; })();
+const _enemyMat  = new THREE.MeshLambertMaterial({ color: 0xff3333 });
 const _hpBgMat   = new THREE.MeshBasicMaterial({ color: 0x330000 });
 const _hpFillMat = new THREE.MeshBasicMaterial({ color: 0x22ee44 });
 
@@ -415,15 +431,15 @@ class Enemy {
     this.dead = false;
 
     this.body = new THREE.Mesh(_enemyGeo, _enemyMat.clone());
-    this.body.position.z = 0.1;
+    this.body.position.z = 0.425;
     scene.add(this.body);
 
     this.hpBg = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 0.13), _hpBgMat.clone());
-    this.hpBg.position.z = 0.13;
+    this.hpBg.position.z = 1.2;
     scene.add(this.hpBg);
 
     this.hpBar = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 0.13), _hpFillMat.clone());
-    this.hpBar.position.z = 0.14;
+    this.hpBar.position.z = 1.25;
     scene.add(this.hpBar);
   }
 
@@ -450,12 +466,12 @@ class Enemy {
     }
 
     // Sync meshes
-    this.body.position.set(this.x, this.y, 0.1);
-    this.hpBg.position.set(this.x, this.y + 0.72, 0.13);
+    this.body.position.set(this.x, this.y, 0.425);
+    this.hpBg.position.set(this.x, this.y + 0.65, 1.2);
 
     const frac = Math.max(0, this.hp / ENEMY_MAX_HP);
     this.hpBar.scale.x = frac;
-    this.hpBar.position.set(this.x - (1 - frac) * 0.425, this.y + 0.72, 0.14);
+    this.hpBar.position.set(this.x - (1 - frac) * 0.425, this.y + 0.65, 1.25);
 
     if (this.damageCooldown > 0) this.damageCooldown -= dt;
   }
@@ -750,16 +766,16 @@ function loop(ts) {
     spawnWave(wave);
   }
 
-  // ── Camera follows player ────────────────────────────────────
-  camera.position.x = player.x;
-  camera.position.y = player.y;
+  // ── Camera follows player (slight tilt for 3D depth) ─────────
+  camera.position.set(player.x, player.y - CAM_BACK, CAM_HIGH);
+  camera.lookAt(player.x, player.y, 0);
 
   // ── Player mesh ──────────────────────────────────────────────
-  playerBody.position.set(player.x, player.y, 0.1);
+  playerBody.position.set(player.x, player.y, 0.45);
   facingDot.position.set(
-    player.x + Math.cos(player.facing) * 0.62,
-    player.y + Math.sin(player.facing) * 0.62,
-    0.12
+    player.x + Math.cos(player.facing) * 0.55,
+    player.y + Math.sin(player.facing) * 0.55,
+    0.92
   );
 
   updateHUD();
