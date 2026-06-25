@@ -2,6 +2,10 @@
 
 A simple real-time 2D dungeon crawler with a top-down view, built with Three.js. Mobile-first with touch and drag movement controls.
 
+## Screenshot
+
+![Gameplay screenshot showing the dungeon, player, HUD, and mobile joystick](screenshots/gameplay.png)
+
 ## Features
 
 - **Top-down 2D view** rendered with Three.js
