@@ -612,6 +612,20 @@ function loop(ts) {
     if (!isWallAt(player.x,       player.y + dy))  player.y += dy;
   }
 
+  // ── Face closest enemy in range (overrides walk direction) ───
+  {
+    let closestDist = SWORD_RANGE * 1.6;
+    let closestEnemy = null;
+    for (const e of enemies) {
+      if (e.dead) continue;
+      const d = Math.hypot(e.x - player.x, e.y - player.y);
+      if (d < closestDist) { closestDist = d; closestEnemy = e; }
+    }
+    if (closestEnemy) {
+      player.facing = Math.atan2(closestEnemy.y - player.y, closestEnemy.x - player.x);
+    }
+  }
+
   // ── Auto sword attack ────────────────────────────────────────
   if (player.swordCooldown > 0) player.swordCooldown -= dt;
 
