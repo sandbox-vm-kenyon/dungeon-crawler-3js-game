@@ -2,6 +2,10 @@
 
 A simple real-time 2D dungeon crawler with a top-down view, built with Three.js. Mobile-first with touch and drag movement controls.
 
+## Play Live
+
+**[Play in browser](https://sandbox-vm-kenyon.github.io/dungeon-crawler-3js-game/)** — hosted on GitHub Pages, no install required.
+
 ## Screenshot
 
 ![Gameplay screenshot showing the dungeon, player, HUD, and mobile joystick](screenshots/gameplay.png)
