@@ -355,23 +355,43 @@ scene.add(fillLight);
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  PLAYER MESH  (3D cylinder standing upright in Z)
+//  PLAYER MESH  (3D capsule: hemisphere + cylinder + hemisphere)
 // ═══════════════════════════════════════════════════════════════
-const _playerGeo = new THREE.CylinderGeometry(PLAYER_RADIUS, PLAYER_RADIUS, 0.9, 18);
-_playerGeo.rotateX(Math.PI / 2); // axis along Z so it stands on the XY floor
-const playerBody = new THREE.Mesh(
-  _playerGeo,
-  new THREE.MeshLambertMaterial({ color: 0x44aaff })
-);
-playerBody.position.z = 0.45;   // half-height above floor
+const P_CYL_H = 0.4;  // height of the cylinder section
+const _pMat = new THREE.MeshLambertMaterial({ color: 0x44aaff });
+
+// playerBody is a Group so position.set() moves the whole capsule
+const playerBody = new THREE.Group();
+
+// Cylinder body
+const _pCylGeo = new THREE.CylinderGeometry(PLAYER_RADIUS, PLAYER_RADIUS, P_CYL_H, 18);
+_pCylGeo.rotateX(Math.PI / 2); // Z is now the capsule axis
+const _pCyl = new THREE.Mesh(_pCylGeo, _pMat);
+_pCyl.position.z = PLAYER_RADIUS + P_CYL_H / 2; // cylinder centre in group space
+playerBody.add(_pCyl);
+
+// Top hemisphere (dome toward +Z)
+const _pTopGeo = new THREE.SphereGeometry(PLAYER_RADIUS, 18, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+_pTopGeo.rotateX(Math.PI / 2);
+const _pTop = new THREE.Mesh(_pTopGeo, _pMat);
+_pTop.position.z = PLAYER_RADIUS + P_CYL_H; // sits at top edge of cylinder
+playerBody.add(_pTop);
+
+// Bottom hemisphere (dome toward -Z)
+const _pBotGeo = new THREE.SphereGeometry(PLAYER_RADIUS, 18, 8, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2);
+_pBotGeo.rotateX(Math.PI / 2);
+const _pBot = new THREE.Mesh(_pBotGeo, _pMat);
+_pBot.position.z = PLAYER_RADIUS; // sits at bottom edge of cylinder
+playerBody.add(_pBot);
+
 scene.add(playerBody);
 
-// Facing indicator — small sphere on top of the cylinder
+// Facing indicator — small sphere above the capsule top
 const facingDot = new THREE.Mesh(
   new THREE.SphereGeometry(0.14, 8, 6),
   new THREE.MeshLambertMaterial({ color: 0xffffff })
 );
-facingDot.position.z = 0.92;
+facingDot.position.z = PLAYER_RADIUS * 2 + P_CYL_H + 0.1; // above top cap
 scene.add(facingDot);
 
 // ═══════════════════════════════════════════════════════════════
@@ -417,8 +437,32 @@ function hideSwordArc() {
 // ═══════════════════════════════════════════════════════════════
 //  ENEMY CLASS
 // ═══════════════════════════════════════════════════════════════
-const _enemyGeo  = (() => { const g = new THREE.CylinderGeometry(ENEMY_RADIUS, ENEMY_RADIUS * 0.85, 0.85, 12); g.rotateX(Math.PI / 2); return g; })();
+const E_CYL_H = 0.35; // height of the cylinder section for enemy capsule
 const _enemyMat  = new THREE.MeshLambertMaterial({ color: 0xff3333 });
+
+function _makeEnemyCapsule() {
+  const group = new THREE.Group();
+  const mat = _enemyMat.clone();
+  // Cylinder body
+  const cg = new THREE.CylinderGeometry(ENEMY_RADIUS, ENEMY_RADIUS, E_CYL_H, 12);
+  cg.rotateX(Math.PI / 2);
+  const cyl = new THREE.Mesh(cg, mat);
+  cyl.position.z = ENEMY_RADIUS + E_CYL_H / 2;
+  group.add(cyl);
+  // Top hemisphere (dome toward +Z)
+  const tg = new THREE.SphereGeometry(ENEMY_RADIUS, 12, 7, 0, Math.PI * 2, 0, Math.PI / 2);
+  tg.rotateX(Math.PI / 2);
+  const top = new THREE.Mesh(tg, mat);
+  top.position.z = ENEMY_RADIUS + E_CYL_H;
+  group.add(top);
+  // Bottom hemisphere (dome toward -Z)
+  const bg = new THREE.SphereGeometry(ENEMY_RADIUS, 12, 7, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2);
+  bg.rotateX(Math.PI / 2);
+  const bot = new THREE.Mesh(bg, mat);
+  bot.position.z = ENEMY_RADIUS;
+  group.add(bot);
+  return group;
+}
 const _hpBgMat   = new THREE.MeshBasicMaterial({ color: 0x330000 });
 const _hpFillMat = new THREE.MeshBasicMaterial({ color: 0x22ee44 });
 
@@ -430,16 +474,15 @@ class Enemy {
     this.damageCooldown = 0;
     this.dead = false;
 
-    this.body = new THREE.Mesh(_enemyGeo, _enemyMat.clone());
-    this.body.position.z = 0.425;
+    this.body = _makeEnemyCapsule();
     scene.add(this.body);
 
     this.hpBg = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 0.13), _hpBgMat.clone());
-    this.hpBg.position.z = 1.2;
+    this.hpBg.position.z = 1.5;
     scene.add(this.hpBg);
 
     this.hpBar = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 0.13), _hpFillMat.clone());
-    this.hpBar.position.z = 1.25;
+    this.hpBar.position.z = 1.55;
     scene.add(this.hpBar);
   }
 
@@ -466,12 +509,12 @@ class Enemy {
     }
 
     // Sync meshes
-    this.body.position.set(this.x, this.y, 0.425);
-    this.hpBg.position.set(this.x, this.y + 0.65, 1.2);
+    this.body.position.set(this.x, this.y, 0);
+    this.hpBg.position.set(this.x, this.y + 0.65, 1.5);
 
     const frac = Math.max(0, this.hp / ENEMY_MAX_HP);
     this.hpBar.scale.x = frac;
-    this.hpBar.position.set(this.x - (1 - frac) * 0.425, this.y + 0.65, 1.25);
+    this.hpBar.position.set(this.x - (1 - frac) * 0.425, this.y + 0.65, 1.55);
 
     if (this.damageCooldown > 0) this.damageCooldown -= dt;
   }
@@ -481,7 +524,7 @@ class Enemy {
     scene.remove(this.body);
     scene.remove(this.hpBg);
     scene.remove(this.hpBar);
-    this.body.geometry.dispose();
+    this.body.children.forEach(m => m.geometry.dispose());
   }
 }
 
@@ -771,11 +814,11 @@ function loop(ts) {
   camera.lookAt(player.x, player.y, 0);
 
   // ── Player mesh ──────────────────────────────────────────────
-  playerBody.position.set(player.x, player.y, 0.45);
+  playerBody.position.set(player.x, player.y, 0);
   facingDot.position.set(
     player.x + Math.cos(player.facing) * 0.55,
     player.y + Math.sin(player.facing) * 0.55,
-    0.92
+    PLAYER_RADIUS * 2 + P_CYL_H + 0.1
   );
 
   updateHUD();
