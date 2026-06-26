@@ -214,6 +214,12 @@ function isWallAt(wx, wy) {
   return MAP[row][col] === 1;
 }
 
+// Radius-aware wall test — checks 4 cardinal edge points of a circle
+function isCircleWallAt(cx, cy, r) {
+  return isWallAt(cx + r, cy) || isWallAt(cx - r, cy) ||
+         isWallAt(cx, cy + r) || isWallAt(cx, cy - r);
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  PATHFINDING  (BFS flow field from player tile)
 // ═══════════════════════════════════════════════════════════════
@@ -503,9 +509,9 @@ class Enemy {
     if (mlen > 0) {
       const vx = (mdx / mlen) * speed * dt;
       const vy = (mdy / mlen) * speed * dt;
-      // Slide-axis collision
-      if (!isWallAt(this.x + vx, this.y))       this.x += vx;
-      if (!isWallAt(this.x,       this.y + vy))  this.y += vy;
+      // Slide-axis collision (uses outer radius so enemies don't clip walls)
+      if (!isCircleWallAt(this.x + vx, this.y, ENEMY_RADIUS))  this.x += vx;
+      if (!isCircleWallAt(this.x, this.y + vy,  ENEMY_RADIUS))  this.y += vy;
     }
 
     // Sync meshes
@@ -719,11 +725,11 @@ function loop(ts) {
     // Update facing toward movement
     player.facing = Math.atan2(mv.y, mv.x);
 
-    // Slide-axis collision
+    // Slide-axis collision (uses outer radius so player doesn't clip walls)
     const dx = mv.x * PLAYER_SPEED * dt;
     const dy = mv.y * PLAYER_SPEED * dt;
-    if (!isWallAt(player.x + dx, player.y))       player.x += dx;
-    if (!isWallAt(player.x,       player.y + dy))  player.y += dy;
+    if (!isCircleWallAt(player.x + dx, player.y, PLAYER_RADIUS))  player.x += dx;
+    if (!isCircleWallAt(player.x, player.y + dy,  PLAYER_RADIUS))  player.y += dy;
   }
 
   // ── Face closest enemy in range (overrides walk direction) ───
