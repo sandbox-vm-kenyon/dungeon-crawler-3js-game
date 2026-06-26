@@ -155,7 +155,7 @@ const ENEMY_DAMAGE_CD   = 0.75;
 const ENEMY_SPEED_BASE  = 2.8;
 const ENEMY_SPEED_SCALE = 0.08;  // per wave
 
-const VIEW_HALF = 18;   // orthographic half-height
+const CAM_FOV   = 60;   // perspective field of view (degrees)
 const WALL_H    = 3;    // wall height for 3D rendering
 const CAM_BACK  = 8;    // camera Y offset behind view centre (creates tilt)
 const CAM_HIGH  = 28;   // camera height above world plane
@@ -275,12 +275,7 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
 
-const aspect = innerWidth / innerHeight;
-const camera = new THREE.OrthographicCamera(
-  -VIEW_HALF * aspect, VIEW_HALF * aspect,
-   VIEW_HALF,         -VIEW_HALF,
-  0.1, 500
-);
+const camera = new THREE.PerspectiveCamera(CAM_FOV, innerWidth / innerHeight, 0.1, 500);
 camera.position.set(0, -CAM_BACK, CAM_HIGH);
 camera.lookAt(0, 0, 0);
 
@@ -835,9 +830,7 @@ function loop(ts) {
 //  RESIZE
 // ═══════════════════════════════════════════════════════════════
 window.addEventListener('resize', () => {
-  const a = innerWidth / innerHeight;
-  camera.left   = -VIEW_HALF * a;
-  camera.right  =  VIEW_HALF * a;
+  camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
 });
