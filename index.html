@@ -869,11 +869,9 @@ function loop(ts) {
     spawnWave(wave);
   }
 
-  // ── Camera follows player (zoom-in, slight look-ahead offset) ──
-  const leadX = Math.cos(player.facing) * CAM_LEAD;
-  const leadY = Math.sin(player.facing) * CAM_LEAD;
-  camera.position.set(player.x + leadX, player.y + leadY - CAM_BACK, CAM_HIGH);
-  camera.lookAt(player.x + leadX, player.y + leadY, 0);
+  // ── Camera follows player (fixed overhead position, no facing offset) ──
+  camera.position.set(player.x, player.y - CAM_BACK, CAM_HIGH);
+  camera.lookAt(player.x, player.y, 0);
 
   // ── Player mesh ──────────────────────────────────────────────
   playerBody.position.set(player.x, player.y, 0);
