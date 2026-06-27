@@ -215,10 +215,66 @@ function isWallAt(wx, wy) {
   return MAP[row][col] === 1;
 }
 
-// Radius-aware wall test — checks 4 cardinal edge points of a circle
+// Radius-aware wall test — proper circle-vs-AABB check against tile grid.
+// Uses actual tile boundaries (not a 4-point probe) so corners don't trap entities.
 function isCircleWallAt(cx, cy, r) {
-  return isWallAt(cx + r, cy) || isWallAt(cx - r, cy) ||
-         isWallAt(cx, cy + r) || isWallAt(cx, cy - r);
+  const minCol = Math.floor((cx - r) / TILE + COLS / 2);
+  const maxCol = Math.ceil( (cx + r) / TILE + COLS / 2);
+  const minRow = Math.floor((cy - r) / TILE + ROWS / 2);
+  const maxRow = Math.ceil( (cy + r) / TILE + ROWS / 2);
+  for (let row = minRow; row <= maxRow; row++) {
+    for (let col = minCol; col <= maxCol; col++) {
+      if (col < 0 || col >= COLS || row < 0 || row >= ROWS) return true;
+      if (MAP[row][col] !== 1) continue;
+      const tx   = (col - COLS / 2) * TILE;
+      const ty   = (row - ROWS / 2) * TILE;
+      const half = TILE / 2;
+      const nearX = Math.max(tx - half, Math.min(tx + half, cx));
+      const nearY = Math.max(ty - half, Math.min(ty + half, cy));
+      if ((cx - nearX) * (cx - nearX) + (cy - nearY) * (cy - nearY) < r * r) return true;
+    }
+  }
+  return false;
+}
+
+// Push a circle (cx,cy,r) out of all overlapping wall tile AABBs.
+// Returns the resolved {x,y} position. Handles corner situations by pushing
+// along the MTV direction rather than clamping a single axis.
+function resolveCircleWalls(cx, cy, r) {
+  let x = cx, y = cy;
+  for (let iter = 0; iter < 4; iter++) {
+    let anyOverlap = false;
+    const minCol = Math.floor((x - r) / TILE + COLS / 2) - 1;
+    const maxCol = Math.ceil( (x + r) / TILE + COLS / 2) + 1;
+    const minRow = Math.floor((y - r) / TILE + ROWS / 2) - 1;
+    const maxRow = Math.ceil( (y + r) / TILE + ROWS / 2) + 1;
+    for (let row = minRow; row <= maxRow; row++) {
+      for (let col = minCol; col <= maxCol; col++) {
+        if (col < 0 || col >= COLS || row < 0 || row >= ROWS) continue;
+        if (MAP[row][col] !== 1) continue;
+        const tx   = (col - COLS / 2) * TILE;
+        const ty   = (row - ROWS / 2) * TILE;
+        const half = TILE / 2;
+        const nearX = Math.max(tx - half, Math.min(tx + half, x));
+        const nearY = Math.max(ty - half, Math.min(ty + half, y));
+        const dx = x - nearX, dy = y - nearY;
+        const dist2 = dx * dx + dy * dy;
+        if (dist2 < r * r) {
+          anyOverlap = true;
+          const dist = Math.sqrt(dist2);
+          if (dist > 0.0001) {
+            const push = r - dist + 0.001;
+            x += (dx / dist) * push;
+            y += (dy / dist) * push;
+          } else {
+            x += r + 0.001; // degenerate: entity exactly on tile corner, push right
+          }
+        }
+      }
+    }
+    if (!anyOverlap) break;
+  }
+  return { x, y };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -505,9 +561,11 @@ class Enemy {
     if (mlen > 0) {
       const vx = (mdx / mlen) * speed * dt;
       const vy = (mdy / mlen) * speed * dt;
-      // Slide-axis collision (uses outer radius so enemies don't clip walls)
-      if (!isCircleWallAt(this.x + vx, this.y, ENEMY_RADIUS))  this.x += vx;
-      if (!isCircleWallAt(this.x, this.y + vy,  ENEMY_RADIUS))  this.y += vy;
+      // Move freely then resolve wall penetrations — handles corners without trapping
+      this.x += vx;
+      this.y += vy;
+      const re = resolveCircleWalls(this.x, this.y, ENEMY_RADIUS);
+      this.x = re.x; this.y = re.y;
     }
 
     // Sync meshes
@@ -721,11 +779,11 @@ function loop(ts) {
     // Update facing toward movement
     player.facing = Math.atan2(mv.y, mv.x);
 
-    // Slide-axis collision (uses outer radius so player doesn't clip walls)
-    const dx = mv.x * PLAYER_SPEED * dt;
-    const dy = mv.y * PLAYER_SPEED * dt;
-    if (!isCircleWallAt(player.x + dx, player.y, PLAYER_RADIUS))  player.x += dx;
-    if (!isCircleWallAt(player.x, player.y + dy,  PLAYER_RADIUS))  player.y += dy;
+    // Move freely then resolve wall penetrations — handles corners without trapping
+    player.x += mv.x * PLAYER_SPEED * dt;
+    player.y += mv.y * PLAYER_SPEED * dt;
+    const rp = resolveCircleWalls(player.x, player.y, PLAYER_RADIUS);
+    player.x = rp.x; player.y = rp.y;
   }
 
   // ── Face closest enemy in range (overrides walk direction) ───
